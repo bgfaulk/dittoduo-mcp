@@ -25,7 +25,7 @@ These come from the helper, not from this repo.
 
 | Tool | What it does |
 | --- | --- |
-| `list_clips` | Recent clips, newest first: metadata and a short redacted preview, never the full text. |
+| `list_clips` | Recent clips, newest first: metadata and a short redacted preview, never the full text. Optional `kind` filter: `text`, `image`, `mixed` or `fileRef`. |
 | `get_clip` | One recent clip by id: metadata by default, optionally the redacted text. |
 
 ## Install

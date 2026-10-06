@@ -29,7 +29,7 @@
   "tools": [
     {
       "name": "list_clips",
-      "description": "List recent clips, newest first: metadata and a short redacted preview, never the full text."
+      "description": "List recent clips, newest first: metadata and a short redacted preview, never the full text. Optional kind filter: text, image, mixed or fileRef."
     },
     {
       "name": "get_clip",
