@@ -256,3 +256,33 @@ test("host streams that are not fds 0/1 (Claude Desktop's built-in Node) still r
   assert.equal(await exited, 0);
   assert.equal(out, input);
 });
+
+test("starts when the host loads it with import() (Claude Desktop's built-in Node)", () => {
+  const dir = tmpDir();
+  const stub = writeStub(dir);
+  const entry = path.resolve(__dirname, "../server/launcher.js");
+  const { pathToFileURL } = require("node:url");
+  // Mirrors Claude Desktop's node host: argv[1] is the entry, loaded via import().
+  const script =
+    `process.argv = ["node", ${JSON.stringify(entry)}];` +
+    `await import(${JSON.stringify(pathToFileURL(entry).href)});`;
+  const r = childProcess.spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", script],
+    { input: "", env: { ...process.env, DITTODUO_HELPER: stub }, timeout: 10000 },
+  );
+  // The stub isn't signed, so a launcher that ran refuses it; one that never ran is silent.
+  assert.equal(r.status, 1);
+  assert.equal(
+    r.stderr.toString("utf8"),
+    `dittoduo-mcp: ${launcher.MSG_BAD_SIGNATURE}\n`,
+  );
+});
+
+test("isEntryPoint compares resolved paths", () => {
+  const entry = path.resolve(__dirname, "../server/launcher.js");
+  assert.equal(launcher.isEntryPoint(entry, entry), true);
+  assert.equal(launcher.isEntryPoint(path.join(__dirname, "..", "server", "..", "server", "launcher.js"), entry), true);
+  assert.equal(launcher.isEntryPoint(__filename, entry), false);
+  assert.equal(launcher.isEntryPoint(undefined, entry), false);
+});

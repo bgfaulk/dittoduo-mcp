@@ -130,6 +130,23 @@ module.exports = {
   MSG_NOT_INSTALLED,
   MSG_BAD_SIGNATURE,
   MSG_BAD_ENV,
+  isEntryPoint,
 };
 
-if (require.main === module) main();
+// True when this file is the program being run. `require.main === module` is
+// not enough: Claude Desktop's built-in Node loads the entry point with
+// `import()`, which leaves `require.main` pointing at its own host script, so
+// the launcher would never start and the host would time out on `initialize`.
+function isEntryPoint(argv1, filename) {
+  if (!argv1) return false;
+  const real = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  return real(argv1) === real(filename);
+}
+
+if (require.main === module || isEntryPoint(process.argv[1], __filename)) main();

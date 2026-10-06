@@ -3,7 +3,7 @@
   "name": "io.dittoduo/clipboard",
   "title": "DittoDuo",
   "description": "Read-only, redacted access to recent clipboard history from the DittoDuo Mac app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "websiteUrl": "https://dittoduo.io/mcp",
   "repository": {
     "url": "https://github.com/bgfaulk/dittoduo-mcp",
@@ -22,7 +22,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@dittoduo/mcp",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "transport": {
         "type": "stdio"
       }
