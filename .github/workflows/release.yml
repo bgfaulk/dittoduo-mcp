@@ -1,10 +1,17 @@
 name: release
 
-# Push a tag like v1.0.0 to build and publish a release. The tag must match the
-# version in package.json, manifest.json and server.json.
+# Every push to main and every pull request runs the tests. Push a tag like
+# v1.0.0 to also build and publish a release; the tag must match the version in
+# package.json, manifest.json, server.json and the README's pinned npm version.
+#
+# npm publishing is off until the repository variable PUBLISH_NPM is "true"
+# (the @dittoduo npm scope does not exist yet). While it is off, the release's
+# server.json lists only the .mcpb package.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  pull_request:
 
 permissions:
   contents: read
@@ -27,6 +34,7 @@ jobs:
 
   release:
     needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -40,13 +48,16 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       # Trusted publishing (OIDC) needs npm 11.5.1 or later.
-      - run: npm install -g npm@11
+      - if: vars.PUBLISH_NPM == 'true'
+        run: npm install -g npm@11
 
       - name: Pack the bundle
         run: npx -y @anthropic-ai/mcpb@2.1.2 pack . dittoduo.mcpb
 
       - name: Write the release URL and SHA-256 into server.json
-        run: node scripts/set-release.js "$GITHUB_REF_NAME" dittoduo.mcpb "$GITHUB_REPOSITORY"
+        env:
+          NO_NPM: ${{ vars.PUBLISH_NPM != 'true' && '--no-npm' || '' }}
+        run: node scripts/set-release.js $NO_NPM "$GITHUB_REF_NAME" dittoduo.mcpb "$GITHUB_REPOSITORY"
 
       - name: Validate server.json against the registry schema
         run: |
@@ -55,14 +66,23 @@ jobs:
           npx -y -p ajv-cli@5 -p ajv-formats@3 ajv validate --spec=draft7 -c ajv-formats --strict=false \
             -s server.schema.json -d server.json
 
-      - name: Create the GitHub release
+      # A draft is not public. It becomes public only after every step that can
+      # fail has passed, so a failed npm publish never leaves a release whose
+      # server.json names a package version that does not exist.
+      - name: Create the GitHub release as a draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           sha="$(shasum -a 256 dittoduo.mcpb | cut -d' ' -f1)"
-          gh release create "$GITHUB_REF_NAME" dittoduo.mcpb server.json \
+          gh release create "$GITHUB_REF_NAME" dittoduo.mcpb server.json --draft \
             --title "$GITHUB_REF_NAME" \
             --notes "dittoduo.mcpb SHA-256: \`$sha\`. server.json is the MCP Registry entry for this release."
 
       - name: Publish to npm with provenance
+        if: vars.PUBLISH_NPM == 'true'
         run: npm publish --provenance --access public
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

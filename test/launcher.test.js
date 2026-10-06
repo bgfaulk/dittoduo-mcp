@@ -28,6 +28,7 @@ function fakeProc() {
 
 function fakeChild() {
   const child = new EventEmitter();
+  child.pid = 5151;
   child.exitCode = null;
   child.signalCode = null;
   child.killed = [];
@@ -36,10 +37,12 @@ function fakeChild() {
 }
 
 // Builds deps where `installed` lists the paths that exist.
-function deps({ installed = [], env = {}, signed = true } = {}) {
+function deps({ installed = [], env = {}, signed = true, runningSigned = true } = {}) {
   const proc = fakeProc();
-  const calls = { verified: [], spawned: [] };
+  proc.stdin = { pipes: [], pipe: (dest) => proc.stdin.pipes.push(dest) };
+  const calls = { verified: [], requirements: [], running: [], spawned: [] };
   const child = fakeChild();
+  child.stdin = { on: () => {} };
   return {
     proc,
     calls,
@@ -48,9 +51,14 @@ function deps({ installed = [], env = {}, signed = true } = {}) {
       env,
       homedir: () => HOME,
       isExecutableFile: (p) => installed.includes(p),
-      verifySignature: (p) => {
+      verifySignature: (p, requirement) => {
         calls.verified.push(p);
+        calls.requirements.push(requirement);
         return signed;
+      },
+      verifyRunning: (pid, requirement) => {
+        calls.running.push([pid, requirement]);
+        return runningSigned;
       },
       spawn: (cmd, args, opts) => {
         calls.spawned.push({ cmd, args, opts });
@@ -155,13 +163,75 @@ test("spawn error: message on stderr, exit 1", () => {
   assert.match(d.proc.stderrText, /could not start the DittoDuo helper \(EACCES\)/);
 });
 
-test("signing requirement pins the identifier and team ID", () => {
+test("signing requirement pins the identifier, team ID and Developer ID", () => {
   assert.equal(
     launcher.REQUIREMENT,
+    'identifier "com.501coding.dittoduo.mcp" and anchor apple generic' +
+      " and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */" +
+      " and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */" +
+      ' and certificate leaf[subject.OU] = "473BT83344"',
+  );
+  assert.equal(
+    launcher.REQUIREMENT_DEVELOPMENT,
     'identifier "com.501coding.dittoduo.mcp" and anchor apple generic' +
       ' and certificate leaf[subject.OU] = "473BT83344"',
   );
 });
+
+test("Developer ID is required unless development signatures are opted into", () => {
+  assert.equal(launcher.requirementFor({}), launcher.REQUIREMENT);
+  assert.equal(
+    launcher.requirementFor({ DITTODUO_ALLOW_DEVELOPMENT_SIGNATURE: "true" }),
+    launcher.REQUIREMENT,
+  );
+  assert.equal(
+    launcher.requirementFor({ DITTODUO_ALLOW_DEVELOPMENT_SIGNATURE: "1" }),
+    launcher.REQUIREMENT_DEVELOPMENT,
+  );
+  const d = deps({
+    installed: [APP_HELPER],
+    env: { DITTODUO_ALLOW_DEVELOPMENT_SIGNATURE: "1" },
+  });
+  launcher.main(d.overrides);
+  assert.deepEqual(d.calls.requirements, [launcher.REQUIREMENT_DEVELOPMENT]);
+  assert.deepEqual(d.calls.running, [[5151, launcher.REQUIREMENT_DEVELOPMENT]]);
+});
+
+test("re-verifies the running helper by pid before piping stdin to it", () => {
+  const d = deps({ installed: [APP_HELPER] });
+  launcher.main(d.overrides);
+  assert.deepEqual(d.calls.requirements, [launcher.REQUIREMENT]);
+  assert.deepEqual(d.calls.running, [[5151, launcher.REQUIREMENT]]);
+  assert.deepEqual(d.proc.stdin.pipes, [d.child.stdin]);
+  assert.deepEqual(d.child.killed, []);
+});
+
+test("running helper fails its signature check: killed, message on stderr, exit 1, no input", () => {
+  const d = deps({ installed: [APP_HELPER], runningSigned: false });
+  launcher.main(d.overrides);
+  assert.deepEqual(d.child.killed, ["SIGKILL"]);
+  assert.deepEqual(d.proc.exitCodes, [1]);
+  assert.equal(d.proc.stderrText, `dittoduo-mcp: ${launcher.MSG_BAD_SIGNATURE}\n`);
+  assert.deepEqual(d.proc.stdin.pipes, []);
+  assert.equal(d.child.listenerCount("close"), 0);
+});
+
+test(
+  "real codesign checks a running process by pid",
+  { skip: process.platform !== "darwin" && "needs macOS codesign" },
+  async () => {
+    const sleeper = childProcess.spawn("/bin/sleep", ["30"], { stdio: "ignore" });
+    try {
+      assert.equal(
+        launcher.verifyRunning(sleeper.pid, 'identifier "com.apple.sleep" and anchor apple'),
+        true,
+      );
+      assert.equal(launcher.verifyRunning(sleeper.pid, launcher.REQUIREMENT), false);
+    } finally {
+      sleeper.kill("SIGKILL");
+    }
+  },
+);
 
 // --- Process-level tests -------------------------------------------------
 
@@ -188,7 +258,7 @@ function writeHarness(dir) {
   fs.writeFileSync(
     harness,
     `require(${JSON.stringify(path.resolve(__dirname, "../server/launcher.js"))})` +
-      ".main({ verifySignature: () => true });\n",
+      ".main({ verifySignature: () => true, verifyRunning: () => true });\n",
   );
   return harness;
 }
@@ -250,7 +320,12 @@ test("host streams that are not fds 0/1 (Claude Desktop's built-in Node) still r
   let out = "";
   proc.stdout.on("data", (c) => (out += c));
   const exited = new Promise((resolve) => (proc.exit = resolve));
-  launcher.main({ env: { DITTODUO_HELPER: stub }, verifySignature: () => true, proc });
+  launcher.main({
+    env: { DITTODUO_HELPER: stub },
+    verifySignature: () => true,
+    verifyRunning: () => true,
+    proc,
+  });
   const input = JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize" }) + "\n";
   proc.stdin.end(input);
   assert.equal(await exited, 0);
@@ -286,3 +361,26 @@ test("isEntryPoint compares resolved paths", () => {
   assert.equal(launcher.isEntryPoint(__filename, entry), false);
   assert.equal(launcher.isEntryPoint(undefined, entry), false);
 });
+
+test(
+  "real pid check rejects an unsigned helper that passed a (faked) file check",
+  { skip: process.platform !== "darwin" && "needs macOS codesign" },
+  () => {
+    const dir = tmpDir();
+    const stub = writeStub(dir);
+    const harness = path.join(dir, "harness-pid.js");
+    fs.writeFileSync(
+      harness,
+      `require(${JSON.stringify(path.resolve(__dirname, "../server/launcher.js"))})` +
+        ".main({ verifySignature: () => true });\n",
+    );
+    const r = childProcess.spawnSync(process.execPath, [harness], {
+      input: "should never reach the helper\n",
+      env: { ...process.env, DITTODUO_HELPER: stub },
+      timeout: 10000,
+    });
+    assert.equal(r.status, 1);
+    assert.equal(r.stderr.toString("utf8"), `dittoduo-mcp: ${launcher.MSG_BAD_SIGNATURE}\n`);
+    assert.equal(r.stdout.length, 0);
+  },
+);

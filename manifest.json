@@ -3,9 +3,9 @@
   "manifest_version": "0.3",
   "name": "dittoduo",
   "display_name": "DittoDuo clipboard",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Read-only, redacted access to recent clipboard history from the DittoDuo Mac app (Pro).",
-  "long_description": "A small launcher, not a server. It finds the MCP helper inside the installed DittoDuo app (/Applications/DittoDuo.app), checks that the helper is signed by DittoDuo's Developer ID, and runs it. Requires DittoDuo on macOS. Tool calls need a DittoDuo Pro license and MCP access turned on in DittoDuo Settings; without them the helper answers every call with a short refusal.",
+  "long_description": "A small launcher, not a server. It finds the MCP helper inside the installed DittoDuo app (/Applications/DittoDuo.app), checks that the helper is signed by DittoDuo's Developer ID, runs it, and checks the running helper again before passing it any input. Requires DittoDuo on macOS. Tool calls need a DittoDuo Pro license and MCP access turned on in DittoDuo Settings; without them the helper answers every call with a short refusal.",
   "author": {
     "name": "501 Coding",
     "url": "https://dittoduo.io"

@@ -3,10 +3,11 @@
 Lets MCP hosts (Claude Desktop, Claude Code, Cursor and others) use the MCP server
 that ships inside the [DittoDuo](https://dittoduo.io) Mac app.
 
-This repo holds a launcher, not a server. `server/launcher.js` is about 120 lines of
+This repo holds a launcher, not a server. `server/launcher.js` is about 200 lines of
 Node with no dependencies. It finds the helper inside the installed app, checks the
-helper's code signature, and runs it. MCP messages pass straight through stdin and
-stdout; the launcher never reads or changes them.
+helper's code signature, runs it, and checks the running process's signature again
+before passing it any input. MCP messages pass straight through stdin and stdout; the
+launcher never reads or changes them.
 
 The same file is the entry point of the `.mcpb` bundle and the `bin` of the npm
 package `@dittoduo/mcp`.
@@ -33,12 +34,13 @@ These come from the helper, not from this repo.
 [latest release](https://github.com/bgfaulk/dittoduo-mcp/releases/latest), check its
 SHA-256 against the release notes, and open it.
 
-**npm:** use a pinned version rather than whatever is latest:
+**npm:** not published yet (the `@dittoduo` npm scope does not exist). Once it is,
+use a pinned version rather than whatever is latest:
 
 ```json
 {
   "mcpServers": {
-    "dittoduo": { "command": "npx", "args": ["-y", "@dittoduo/mcp@1.0.0"] }
+    "dittoduo": { "command": "npx", "args": ["-y", "@dittoduo/mcp@1.0.2"] }
   }
 }
 ```
@@ -57,16 +59,38 @@ install DittoDuo.
 
    ```
    codesign --verify --strict \
-     -R='identifier "com.501coding.dittoduo.mcp" and anchor apple generic and certificate leaf[subject.OU] = "473BT83344"' \
+     -R='identifier "com.501coding.dittoduo.mcp" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "473BT83344"' \
      <helper>
    ```
 
-   So the helper must be signed with a Developer ID certificate issued by Apple to
-   team `473BT83344`, under the identifier `com.501coding.dittoduo.mcp`. A helper
-   picked through `$DITTODUO_HELPER` gets the same check.
-3. **Runs it** with `spawn(helper, [], { stdio: "inherit" })`. The helper gets the
-   launcher's stdin, stdout and stderr. SIGTERM, SIGINT and SIGHUP go to the helper.
-   The launcher exits with the helper's exit code, or by the same signal that ended it.
+   So the helper must be signed with a **Developer ID Application** certificate
+   (intermediate `1.2.840.113635.100.6.2.6`, leaf `1.2.840.113635.100.6.1.13`) issued
+   by Apple to team `473BT83344`, under the identifier `com.501coding.dittoduo.mcp`.
+   An Apple Development signature for the same team does not pass. A helper picked
+   through `$DITTODUO_HELPER` gets the same check.
+3. **Runs it** with `spawn(helper, [], { stdio: ["pipe", "pipe", "pipe"] })`, then
+   **checks the running process** with the same requirement,
+   `codesign --verify --strict -R=<requirement> <pid>`, before any input reaches it.
+   If that fails, the helper is killed and the launcher exits with the signature
+   message below.
+4. **Pipes stdio.** The launcher pipes its stdin to the helper and the helper's stdout
+   and stderr back, rather than letting the helper inherit them: hosts that run the
+   launcher inside their own Node runtime (Claude Desktop's built-in Node) hand it
+   stdin/stdout streams that are not file descriptors 0 and 1, so an inherited helper
+   would never see a message. SIGTERM, SIGINT and SIGHUP go to the helper. The
+   launcher exits with the helper's exit code, or by the same signal that ended it.
+
+The launcher starts itself when it is the program being run, whether the host runs
+it with `node server/launcher.js` or loads it with `import()` and `argv[1]` set to it
+(Claude Desktop's built-in Node does the latter, which leaves `require.main` pointing
+at the host's own script).
+
+### Development builds
+
+`DITTODUO_ALLOW_DEVELOPMENT_SIGNATURE=1` relaxes the requirement to any
+Apple-issued certificate for team `473BT83344` (for example an Apple Development
+build of DittoDuo), dropping the two Developer ID checks. Use it only to test a local
+build; released DittoDuo is always Developer ID signed and notarized.
 
 If something is wrong it writes one line to stderr and exits 1:
 
@@ -81,10 +105,12 @@ If something is wrong it writes one line to stderr and exits 1:
 - **Published from CI.** Releases are built by `.github/workflows/release.yml` from a
   tag. npm packages are published through trusted publishing (OIDC) with a provenance
   attestation, so `npm view @dittoduo/mcp` shows which commit and workflow built them.
-- **Check-then-run gap.** There is a short window between `codesign --verify` and
-  `spawn`. Something able to swap the helper in that window could already change
-  `/Applications/DittoDuo.app`, which needs admin rights for a normal install. This is
-  accepted.
+- **Check-then-run gap, closed.** A drag-installed `/Applications/DittoDuo.app` is
+  owned by the user who installed it, and `~/Applications` is user-writable, so a
+  same-user process could swap the helper between the file check and `spawn`. The
+  launcher therefore checks the running process by pid after `spawn` and before
+  sending it any input; the helper does nothing until its first message. What
+  remains is a same-user attacker, who can already read the user's data.
 - **No network.** The launcher makes no network calls. The helper reads DittoDuo's
   local store; it does not talk to any server.
 
@@ -96,28 +122,43 @@ npx -y @anthropic-ai/mcpb@2.1.2 validate manifest.json
 npx -y @anthropic-ai/mcpb@2.1.2 pack . dittoduo.mcpb  # files listed in .mcpbignore stay out
 ```
 
-The tests replace `codesign` and `spawn` with fakes, except two: one runs the real
-launcher against a stub helper and checks that stdin reaches stdout byte for byte,
-and one (macOS only) checks that the real `codesign` rejects an unsigned helper.
+The tests replace `codesign` and `spawn` with fakes, except the process-level ones:
+the real launcher against a stub helper (stdin reaches stdout byte for byte, also
+through host streams that are not fds 0/1, and when loaded with `import()`), and on
+macOS the real `codesign` rejecting an unsigned helper both as a file and as a
+running pid.
 
 ## Releasing
 
-1. Bump `version` in `package.json`, `manifest.json` and `server.json` (both the
-   top-level `version` and the npm package's `version`). Commit.
-2. Tag and push: `git tag v1.0.1 && git push origin v1.0.1`.
-3. The `release` workflow then:
-   - runs the tests and `mcpb validate`;
-   - packs `dittoduo.mcpb`;
-   - checks the tag matches every version field, and writes the release URL and the
-     bundle's SHA-256 into `server.json` (`scripts/set-release.js`);
-   - validates `server.json` against its published schema;
-   - creates the GitHub release with `dittoduo.mcpb` and `server.json` attached;
-   - runs `npm publish --provenance --access public`.
+The workflow runs the tests and `mcpb validate` on every push to `main` and every
+pull request. A `v*` tag also runs the release job.
 
-One-time npm setup: create the `dittoduo` org with 2FA required, publish the first
-version, then add a trusted publisher on npmjs.com for this repository, workflow
-`release.yml`, environment `release`. After that, set the package to disallow token
-publishing.
+1. Bump `version` in `package.json`, `manifest.json` and `server.json` (the top-level
+   `version` and the npm package's `version`) and the pinned version in this README.
+   Commit.
+2. Tag and push: `git tag v1.0.2 && git push origin v1.0.2`.
+3. The `release` job then:
+   - packs `dittoduo.mcpb`;
+   - checks the tag matches every version field and the README pin, and writes the
+     release URL and the bundle's SHA-256 into `server.json` (`scripts/set-release.js`;
+     with `--no-npm` it also drops the npm package from that file);
+   - validates `server.json` against its published schema;
+   - creates the GitHub release as a **draft** with `dittoduo.mcpb` and `server.json`;
+   - runs `npm publish --provenance --access public`, only when the repository
+     variable `PUBLISH_NPM` is `true`;
+   - publishes the release. If any step fails, the release stays a draft.
+
+The release job runs in the `release` environment. GitHub creates it on first use if
+it is missing, but create it under Settings → Environments before the first tag:
+that is where to add required reviewers (a manual approval before anything is
+published) and a `v*` tag rule, and npm trusted publishing is scoped to it.
+
+npm is deferred until the `dittoduo` npm scope exists. While `PUBLISH_NPM` is unset,
+the release's `server.json` lists only the `.mcpb` package, so the Registry entry can
+be published without npm. To turn npm on: create the `dittoduo` org with 2FA required,
+publish the first version by hand, add a trusted publisher on npmjs.com for this
+repository, workflow `release.yml`, environment `release`, set the package to
+disallow token publishing, then set `PUBLISH_NPM` to `true`.
 
 ### MCP Registry (run locally)
 
@@ -153,7 +194,7 @@ the release workflow finishes:
    curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.dittoduo/clipboard"
    ```
 
-The Registry checks npm ownership through `"mcpName": "io.dittoduo/clipboard"` in
+When the npm package is listed, the Registry checks its ownership through `"mcpName": "io.dittoduo/clipboard"` in
 `package.json`. For the `.mcpb` package it requires a GitHub or GitLab release URL that
 contains "mcp", plus `fileSha256`.
 

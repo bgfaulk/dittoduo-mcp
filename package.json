@@ -1,6 +1,6 @@
 {
   "name": "@dittoduo/mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Launcher for the MCP helper inside the DittoDuo Mac app. Verifies its signature and runs it.",
   "mcpName": "io.dittoduo/clipboard",
   "license": "MIT",
