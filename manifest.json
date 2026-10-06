@@ -1,0 +1,49 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/mcpb/main/schemas/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
+  "name": "dittoduo",
+  "display_name": "DittoDuo clipboard",
+  "version": "1.0.0",
+  "description": "Read-only, redacted access to recent clipboard history from the DittoDuo Mac app (Pro).",
+  "long_description": "A small launcher, not a server. It finds the MCP helper inside the installed DittoDuo app (/Applications/DittoDuo.app), checks that the helper is signed by DittoDuo's Developer ID, and runs it. Requires DittoDuo on macOS. Tool calls need a DittoDuo Pro license and MCP access turned on in DittoDuo Settings; without them the helper answers every call with a short refusal.",
+  "author": {
+    "name": "501 Coding",
+    "url": "https://dittoduo.io"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bgfaulk/dittoduo-mcp"
+  },
+  "homepage": "https://dittoduo.io/mcp",
+  "documentation": "https://dittoduo.io/mcp",
+  "support": "https://github.com/bgfaulk/dittoduo-mcp/issues",
+  "server": {
+    "type": "node",
+    "entry_point": "server/launcher.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/launcher.js"],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "list_clips",
+      "description": "List recent clips, newest first: metadata and a short redacted preview, never the full text."
+    },
+    {
+      "name": "get_clip",
+      "description": "Fetch one recent clip by id: metadata by default, optionally the redacted text."
+    }
+  ],
+  "tools_generated": false,
+  "keywords": ["clipboard", "macos", "clipboard-history", "dittoduo"],
+  "license": "MIT",
+  "privacy_policies": ["https://dittoduo.io/privacy"],
+  "compatibility": {
+    "platforms": ["darwin"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@dittoduo/mcp",
+  "version": "1.0.0",
+  "description": "Launcher for the MCP helper inside the DittoDuo Mac app. Verifies its signature and runs it.",
+  "mcpName": "io.dittoduo/clipboard",
+  "license": "MIT",
+  "author": "501 Coding (https://dittoduo.io)",
+  "homepage": "https://dittoduo.io/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bgfaulk/dittoduo-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bgfaulk/dittoduo-mcp/issues"
+  },
+  "keywords": ["mcp", "model-context-protocol", "clipboard", "macos", "dittoduo"],
+  "bin": {
+    "dittoduo-mcp": "server/launcher.js"
+  },
+  "main": "server/launcher.js",
+  "files": ["server/launcher.js"],
+  "os": ["darwin"],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "scripts": {
+    "test": "node --test"
+  }
+}

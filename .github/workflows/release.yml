@@ -1,0 +1,68 @@
+name: release
+
+# Push a tag like v1.0.0 to build and publish a release. The tag must match the
+# version in package.json, manifest.json and server.json.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    # macOS so the real-codesign test runs too.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: node --test
+      - run: npx -y @anthropic-ai/mcpb@2.1.2 validate manifest.json
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write # create the GitHub release and upload assets
+      id-token: write # npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing (OIDC) needs npm 11.5.1 or later.
+      - run: npm install -g npm@11
+
+      - name: Pack the bundle
+        run: npx -y @anthropic-ai/mcpb@2.1.2 pack . dittoduo.mcpb
+
+      - name: Write the release URL and SHA-256 into server.json
+        run: node scripts/set-release.js "$GITHUB_REF_NAME" dittoduo.mcpb "$GITHUB_REPOSITORY"
+
+      - name: Validate server.json against the registry schema
+        run: |
+          schema="$(node -p 'require("./server.json")["$schema"]')"
+          curl -fsSL "$schema" -o server.schema.json
+          npx -y -p ajv-cli@5 -p ajv-formats@3 ajv validate --spec=draft7 -c ajv-formats --strict=false \
+            -s server.schema.json -d server.json
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(shasum -a 256 dittoduo.mcpb | cut -d' ' -f1)"
+          gh release create "$GITHUB_REF_NAME" dittoduo.mcpb server.json \
+            --title "$GITHUB_REF_NAME" \
+            --notes "dittoduo.mcpb SHA-256: \`$sha\`. server.json is the MCP Registry entry for this release."
+
+      - name: Publish to npm with provenance
+        run: npm publish --provenance --access public
