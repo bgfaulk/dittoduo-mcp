@@ -85,7 +85,16 @@ function main(overrides = {}) {
 
   if (!deps.verifySignature(helper)) return fail(deps, MSG_BAD_SIGNATURE);
 
-  const child = deps.spawn(helper, [], { stdio: "inherit" });
+  // Pipe, don't inherit: hosts that run the launcher inside their own Node runtime
+  // (Claude Desktop's built-in Node) give it stdin/stdout streams that are not
+  // file descriptors 0 and 1, so an inherited helper would never see a message.
+  const child = deps.spawn(helper, [], { stdio: ["pipe", "pipe", "pipe"] });
+  if (child.stdin && proc.stdin) {
+    child.stdin.on("error", () => {}); // the helper exited first; "close" reports it
+    proc.stdin.pipe(child.stdin);
+  }
+  if (child.stdout && proc.stdout) child.stdout.pipe(proc.stdout);
+  if (child.stderr) child.stderr.on("data", (chunk) => proc.stderr.write(chunk));
 
   const forward = (signal) => {
     if (child.exitCode === null && child.signalCode === null) child.kill(signal);
@@ -97,7 +106,9 @@ function main(overrides = {}) {
     fail(deps, `could not start the DittoDuo helper (${err.message}).`);
   });
 
-  child.on("exit", (code, signal) => {
+  // "close", not "exit": it fires after the helper's stdout is drained, so the
+  // last reply reaches the host before the launcher exits.
+  child.on("close", (code, signal) => {
     for (const s of signals) proc.removeListener(s, forward);
     if (code !== null) return proc.exit(code);
     // The helper was killed by a signal: end the same way so the host sees it.

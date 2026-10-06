@@ -67,7 +67,7 @@ test("prefers the /Applications copy", () => {
   assert.deepEqual(d.calls.verified, [APP_HELPER]);
   assert.equal(d.calls.spawned[0].cmd, APP_HELPER);
   assert.deepEqual(d.calls.spawned[0].args, []);
-  assert.deepEqual(d.calls.spawned[0].opts, { stdio: "inherit" });
+  assert.deepEqual(d.calls.spawned[0].opts, { stdio: ["pipe", "pipe", "pipe"] });
 });
 
 test("falls back to ~/Applications", () => {
@@ -125,7 +125,7 @@ test("success: forwards the helper's exit code", () => {
   for (const code of [0, 3]) {
     const d = deps({ installed: [APP_HELPER] });
     launcher.main(d.overrides);
-    d.child.emit("exit", code, null);
+    d.child.emit("close", code, null);
     assert.deepEqual(d.proc.exitCodes, [code]);
     assert.equal(d.proc.stderrText, "");
   }
@@ -142,7 +142,7 @@ test("success: passes SIGTERM and SIGINT to the helper", () => {
 test("helper killed by a signal: launcher re-raises it", () => {
   const d = deps({ installed: [APP_HELPER] });
   launcher.main(d.overrides);
-  d.child.emit("exit", null, "SIGTERM");
+  d.child.emit("close", null, "SIGTERM");
   assert.deepEqual(d.proc.kills, [[4242, "SIGTERM"]]);
   assert.equal(d.proc.listenerCount("SIGTERM"), 0);
 });
@@ -239,3 +239,20 @@ test(
     assert.equal(r.stdout.length, 0);
   },
 );
+
+test("host streams that are not fds 0/1 (Claude Desktop's built-in Node) still reach the helper", async () => {
+  const { PassThrough } = require("node:stream");
+  const dir = tmpDir();
+  const stub = writeStub(dir);
+  const proc = fakeProc();
+  proc.stdin = new PassThrough();
+  proc.stdout = new PassThrough();
+  let out = "";
+  proc.stdout.on("data", (c) => (out += c));
+  const exited = new Promise((resolve) => (proc.exit = resolve));
+  launcher.main({ env: { DITTODUO_HELPER: stub }, verifySignature: () => true, proc });
+  const input = JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize" }) + "\n";
+  proc.stdin.end(input);
+  assert.equal(await exited, 0);
+  assert.equal(out, input);
+});
